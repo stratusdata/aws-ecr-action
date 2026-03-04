@@ -133,27 +133,45 @@ function docker_build() {
     docker_tag_args="$docker_tag_args -t $2/$INPUT_REPO:$tag"
   done
 
-  if [ -n "${INPUT_CACHE_FROM}" ]; then
-    for i in ${INPUT_CACHE_FROM//,/ }; do
-      docker pull $i
-    done
-
-    INPUT_EXTRA_BUILD_ARGS="$INPUT_EXTRA_BUILD_ARGS --cache-from=$INPUT_CACHE_FROM"
+  # Setup buildx if not already available
+  if ! docker buildx version &> /dev/null; then
+    echo "Setting up Docker Buildx..."
+    docker buildx create --use --name ecr-builder || docker buildx use ecr-builder
   fi
 
-  docker build $INPUT_EXTRA_BUILD_ARGS -f $INPUT_DOCKERFILE $docker_tag_args $INPUT_PATH
+  # Add GitHub Actions cache support
+  local cache_args="--cache-from=type=gha --cache-to=type=gha,mode=max"
+
+  # Preserve existing cache-from behavior for ECR images (optional)
+  if [ -n "${INPUT_CACHE_FROM}" ]; then
+    for i in ${INPUT_CACHE_FROM//,/ }; do
+      docker pull $i || true  # Don't fail if image doesn't exist
+      cache_args="$cache_args --cache-from=type=registry,ref=$i"
+    done
+  fi
+
+  # Use buildx build with caching and push
+  echo "Building with BuildKit and GitHub Actions cache..."
+  DOCKER_BUILDKIT=1 docker buildx build \
+    $INPUT_EXTRA_BUILD_ARGS \
+    -f $INPUT_DOCKERFILE \
+    $docker_tag_args \
+    $cache_args \
+    --push \
+    $INPUT_PATH
+
   echo "== FINISHED DOCKERIZE"
+  echo "== PUSHED TO ECR"
 }
 
 function docker_push_to_ecr() {
-  echo "== START PUSH TO ECR"
+  # Images already pushed via buildx --push flag in docker_build
+  # Output image names for GitHub Actions
   local TAG=$1
   local DOCKER_TAGS=$(echo "$TAG" | tr "," "\n")
   for tag in $DOCKER_TAGS; do
-    docker push $2/$INPUT_REPO:$tag
     echo name=image::$2/$INPUT_REPO:$tag >> $GITHUB_OUTPUT
   done
-  echo "== FINISHED PUSH TO ECR"
 }
 
 main
