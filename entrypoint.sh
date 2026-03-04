@@ -133,10 +133,13 @@ function docker_build() {
     docker_tag_args="$docker_tag_args -t $2/$INPUT_REPO:$tag"
   done
 
-  # Setup buildx if not already available
-  if ! docker buildx version &> /dev/null; then
-    echo "Setting up Docker Buildx..."
-    docker buildx create --use --name ecr-builder || docker buildx use ecr-builder
+  # Setup buildx builder with docker-container driver (required for cache export)
+  if ! docker buildx inspect ecr-builder &> /dev/null; then
+    echo "Creating Docker Buildx builder..."
+    docker buildx create --use --name ecr-builder --driver docker-container
+  else
+    echo "Using existing Docker Buildx builder..."
+    docker buildx use ecr-builder
   fi
 
   # Add GitHub Actions cache support
